@@ -1,0 +1,17 @@
+# Maven
+target/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Env / secrets
+.env
+application-prod.yml
+
+# OS
+.DS_Store
