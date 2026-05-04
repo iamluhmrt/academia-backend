@@ -26,4 +26,7 @@ public interface AlunoRepository extends JpaRepository<Aluno, Long> {
     List<Aluno> findAllAtivos();
 
     List<Aluno> findAllByOrderByNomeAsc();
+
+    @Query("SELECT MIN(a.dataInicioPlano) FROM Aluno a")
+    java.util.Optional<java.time.LocalDate> findMenorDataInicio();
 }

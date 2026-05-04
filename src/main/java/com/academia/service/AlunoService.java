@@ -34,7 +34,6 @@ public class AlunoService {
     @Transactional
     public AlunoDTO.AlunoResponse criar(AlunoDTO.AlunoRequest request) {
         Plano plano = resolverPlano(request.planoId());
-
         Aluno aluno = Aluno.builder()
                 .nome(request.nome())
                 .telefone(request.telefone())
@@ -45,7 +44,6 @@ public class AlunoService {
                 .observacoes(request.observacoes())
                 .plano(plano)
                 .build();
-
         return toResponse(alunoRepository.save(aluno));
     }
 
@@ -53,7 +51,6 @@ public class AlunoService {
     public AlunoDTO.AlunoResponse atualizar(Long id, AlunoDTO.AlunoRequest request) {
         Aluno aluno = buscarPorId(id);
         Plano plano = resolverPlano(request.planoId());
-
         aluno.setNome(request.nome());
         aluno.setTelefone(request.telefone());
         aluno.setStatus(request.status());
@@ -62,7 +59,6 @@ public class AlunoService {
         aluno.setDataInicioPlano(request.dataInicioPlano());
         aluno.setObservacoes(request.observacoes());
         aluno.setPlano(plano);
-
         return toResponse(alunoRepository.save(aluno));
     }
 
@@ -82,31 +78,52 @@ public class AlunoService {
     @Transactional(readOnly = true)
     public List<AlunoDTO.AlunoResumoResponse> listar(String filtro, String nome) {
         List<Aluno> alunos = buscarAlunosPorFiltroBase(filtro, nome);
+        if (alunos.isEmpty()) return Collections.emptyList();
 
-        // Aplica filtros que precisam de lógica de pagamento
-        if ("INADIMPLENTES".equals(filtro)) {
-            return filtrarInadimplentes(alunos);
-        }
+        // ✅ 1 única query para buscar todos os pagamentos dos alunos retornados
+        List<Long> ids = alunos.stream().map(Aluno::getId).toList();
+        List<Pagamento> todosPagamentos = pagamentoRepository.findAllByAlunoIds(ids);
 
-        if ("VENCE_HOJE".equals(filtro)) {
-            return filtrarVenceHoje(alunos);
-        }
+        // Agrupa por aluno_id para acesso O(1)
+        Map<Long, List<Pagamento>> pagamentosPorAluno = todosPagamentos.stream()
+                .collect(Collectors.groupingBy(p -> p.getAluno().getId()));
 
-        if ("VENCE_MES".equals(filtro)) {
-            return filtrarVenceMes(alunos);
-        }
-
-        // Filtros simples (ATIVO, INATIVO, TODOS)
-        return alunos.stream()
-                .map(a -> toResumoResponse(a, calcularInadimplencia(a)))
+        // Calcula inadimplência em memória para todos os alunos
+        List<AlunoDTO.AlunoResumoResponse> resultado = alunos.stream()
+                .map(a -> {
+                    List<Pagamento> pags = pagamentosPorAluno.getOrDefault(a.getId(), Collections.emptyList());
+                    InadimplenciaInfo info = calcularInadimplenciaEmMemoria(a, pags);
+                    return toResumoResponse(a, info);
+                })
                 .collect(Collectors.toList());
-    }
 
-    // ─── FILTROS INTERNOS ────────────────────────────────────────────────────────
+        // Filtros pós-processamento
+        return switch (filtro == null ? "TODOS" : filtro.toUpperCase()) {
+            case "INADIMPLENTES" -> resultado.stream()
+                    .filter(AlunoDTO.AlunoResumoResponse::inadimplente)
+                    .collect(Collectors.toList());
+            case "VENCE_HOJE" -> {
+                int diaHoje = LocalDate.now().getDayOfMonth();
+                String mesAtual = YearMonth.now().format(MES_FORMATTER);
+                yield resultado.stream()
+                        .filter(r -> {
+                            Aluno a = alunos.stream().filter(al -> al.getId().equals(r.id())).findFirst().orElseThrow();
+                            if (a.getDiaVencimento() != diaHoje) return false;
+                            List<Pagamento> pags = pagamentosPorAluno.getOrDefault(a.getId(), Collections.emptyList());
+                            return pags.stream()
+                                    .filter(p -> p.getMesReferencia().equals(mesAtual))
+                                    .findFirst()
+                                    .map(p -> p.getStatus() != Pagamento.StatusPagamento.PAGO)
+                                    .orElse(true);
+                        })
+                        .collect(Collectors.toList());
+            }
+            default -> resultado;
+        };
+    }
 
     private List<Aluno> buscarAlunosPorFiltroBase(String filtro, String nome) {
         boolean temNome = nome != null && !nome.isBlank();
-
         return switch (filtro == null ? "TODOS" : filtro.toUpperCase()) {
             case "ATIVO"         -> temNome
                     ? alunoRepository.findByStatusAndNomeContainingIgnoreCaseOrderByNomeAsc(Aluno.StatusAluno.ATIVO, nome)
@@ -114,57 +131,32 @@ public class AlunoService {
             case "INATIVO"       -> temNome
                     ? alunoRepository.findByStatusAndNomeContainingIgnoreCaseOrderByNomeAsc(Aluno.StatusAluno.INATIVO, nome)
                     : alunoRepository.findByStatusOrderByNomeAsc(Aluno.StatusAluno.INATIVO);
-            case "INADIMPLENTES" -> alunoRepository.findAllAtivos(); // filtra depois
-            case "VENCE_HOJE"    -> alunoRepository.findAllAtivos();
-            case "VENCE_MES"     -> alunoRepository.findAllAtivos();
+            case "INADIMPLENTES",
+                 "VENCE_HOJE",
+                 "VENCE_MES"     -> alunoRepository.findAllAtivos();
             default              -> temNome
                     ? alunoRepository.findByNomeContainingIgnoreCaseOrderByNomeAsc(nome)
                     : alunoRepository.findAllByOrderByNomeAsc();
         };
     }
 
-    private List<AlunoDTO.AlunoResumoResponse> filtrarInadimplentes(List<Aluno> ativos) {
-        return ativos.stream()
-                .map(a -> {
-                    InadimplenciaInfo info = calcularInadimplencia(a);
-                    return info.inadimplente() ? toResumoResponse(a, info) : null;
-                })
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
-    }
+    // ─── CÁLCULO EM MEMÓRIA (sem queries adicionais) ─────────────────────────────
 
-    private List<AlunoDTO.AlunoResumoResponse> filtrarVenceHoje(List<Aluno> ativos) {
-        int diaHoje = LocalDate.now().getDayOfMonth();
-        String mesAtual = YearMonth.now().format(MES_FORMATTER);
-
-        return ativos.stream()
-                .filter(a -> a.getDiaVencimento().equals(diaHoje))
-                .filter(a -> {
-                    // Só aparece se ainda não pagou o mês atual
-                    return pagamentoRepository
-                            .findByAlunoIdAndMesReferencia(a.getId(), mesAtual)
-                            .map(p -> p.getStatus() != Pagamento.StatusPagamento.PAGO)
-                            .orElse(true); // sem registro = não pagou
-                })
-                .map(a -> toResumoResponse(a, calcularInadimplencia(a)))
-                .collect(Collectors.toList());
-    }
-
-    private List<AlunoDTO.AlunoResumoResponse> filtrarVenceMes(List<Aluno> ativos) {
-        return ativos.stream()
-                .map(a -> toResumoResponse(a, calcularInadimplencia(a)))
-                .collect(Collectors.toList());
-    }
-
-    // ─── CÁLCULO DE INADIMPLÊNCIA ─────────────────────────────────────────────
-
-    public InadimplenciaInfo calcularInadimplencia(Aluno aluno) {
+    /**
+     * Calcula inadimplência usando mapa de pagamentos já carregado.
+     * Substitui o loop com N queries por processamento em memória.
+     */
+    public InadimplenciaInfo calcularInadimplenciaEmMemoria(Aluno aluno, List<Pagamento> pagamentos) {
         if (aluno.getStatus() != Aluno.StatusAluno.ATIVO) {
             return new InadimplenciaInfo(false, null, 0, BigDecimal.ZERO);
         }
 
+        // Indexa por mesReferencia para O(1)
+        Map<String, Pagamento> pagsPorMes = pagamentos.stream()
+                .collect(Collectors.toMap(Pagamento::getMesReferencia, p -> p));
+
         YearMonth mesInicio = YearMonth.from(aluno.getDataInicioPlano());
-        YearMonth mesAtual = YearMonth.now();
+        YearMonth mesAtual  = YearMonth.now();
 
         List<String> mesesEmAtraso = new ArrayList<>();
         BigDecimal totalDevido = BigDecimal.ZERO;
@@ -172,16 +164,14 @@ public class AlunoService {
         YearMonth mes = mesInicio;
         while (!mes.isAfter(mesAtual)) {
             String mesRef = mes.format(MES_FORMATTER);
-            Optional<Pagamento> pagamento = pagamentoRepository
-                    .findByAlunoIdAndMesReferencia(aluno.getId(), mesRef);
+            Pagamento pag = pagsPorMes.get(mesRef);
 
-            boolean pago = pagamento.map(p -> p.getStatus() == Pagamento.StatusPagamento.PAGO).orElse(false);
+            boolean pago = pag != null && pag.getStatus() == Pagamento.StatusPagamento.PAGO;
             if (!pago) {
                 mesesEmAtraso.add(mesRef);
-                // Acumula o valorRestante: se tem registro parcial usa valorRestante, senão usa valorMensal do aluno
-                BigDecimal restante = pagamento
-                        .map(Pagamento::getValorRestante)
-                        .orElse(aluno.getValorMensalEfetivo());
+                BigDecimal restante = pag != null
+                        ? pag.getValorRestante()
+                        : aluno.getValorMensalEfetivo();
                 totalDevido = totalDevido.add(restante);
             }
             mes = mes.plusMonths(1);
@@ -190,9 +180,13 @@ public class AlunoService {
         if (mesesEmAtraso.isEmpty()) {
             return new InadimplenciaInfo(false, null, 0, BigDecimal.ZERO);
         }
+        return new InadimplenciaInfo(true, mesesEmAtraso.get(0), mesesEmAtraso.size(), totalDevido);
+    }
 
-        String maisAntigo = mesesEmAtraso.get(0);
-        return new InadimplenciaInfo(true, maisAntigo, mesesEmAtraso.size(), totalDevido);
+    // Mantido para uso pontual (ex: DashboardService, chamadas individuais)
+    public InadimplenciaInfo calcularInadimplencia(Aluno aluno) {
+        List<Pagamento> pags = pagamentoRepository.findByAlunoIdOrderByMesReferenciaDesc(aluno.getId());
+        return calcularInadimplenciaEmMemoria(aluno, pags);
     }
 
     // ─── HELPERS ────────────────────────────────────────────────────────────────
@@ -204,45 +198,30 @@ public class AlunoService {
 
     private AlunoDTO.AlunoResponse toResponse(Aluno aluno) {
         return new AlunoDTO.AlunoResponse(
-                aluno.getId(),
-                aluno.getNome(),
-                aluno.getTelefone(),
-                aluno.getStatus(),
-                aluno.getDiaVencimento(),
-                aluno.getValorMensalEfetivo(),
-                aluno.getDataInicioPlano(),
-                aluno.getObservacoes(),
-                toPlanoResumo(aluno.getPlano()),
-                aluno.getCreatedAt(),
-                aluno.getUpdatedAt()
+                aluno.getId(), aluno.getNome(), aluno.getTelefone(),
+                aluno.getStatus(), aluno.getDiaVencimento(),
+                aluno.getValorMensalEfetivo(), aluno.getDataInicioPlano(),
+                aluno.getObservacoes(), toPlanoResumo(aluno.getPlano()),
+                aluno.getCreatedAt(), aluno.getUpdatedAt()
         );
     }
 
     private AlunoDTO.AlunoResumoResponse toResumoResponse(Aluno aluno, InadimplenciaInfo info) {
         return new AlunoDTO.AlunoResumoResponse(
-                aluno.getId(),
-                aluno.getNome(),
-                aluno.getTelefone(),
-                aluno.getStatus(),
-                aluno.getDiaVencimento(),
-                aluno.getValorMensalEfetivo(),
-                aluno.getDataInicioPlano(),
-                aluno.getObservacoes(),
-                toPlanoResumo(aluno.getPlano()),
-                info.inadimplente(),
-                info.mesInadimplente(),
-                info.totalMesesEmAtraso(),
-                info.totalDevido()
+                aluno.getId(), aluno.getNome(), aluno.getTelefone(),
+                aluno.getStatus(), aluno.getDiaVencimento(),
+                aluno.getValorMensalEfetivo(), aluno.getDataInicioPlano(),
+                aluno.getObservacoes(), toPlanoResumo(aluno.getPlano()),
+                info.inadimplente(), info.mesInadimplente(),
+                info.totalMesesEmAtraso(), info.totalDevido()
         );
     }
 
     private AlunoDTO.PlanoResumo toPlanoResumo(Plano plano) {
         if (plano == null) return null;
         return new AlunoDTO.PlanoResumo(
-                plano.getId(),
-                plano.getNome(),
-                plano.getValorMensal(),
-                plano.getDuracaoMeses()
+                plano.getId(), plano.getNome(),
+                plano.getValorMensal(), plano.getDuracaoMeses()
         );
     }
 
@@ -252,7 +231,6 @@ public class AlunoService {
                 .orElseThrow(() -> new ResourceNotFoundException("Plano não encontrado com id: " + planoId));
     }
 
-    // Record auxiliar interno
     public record InadimplenciaInfo(
             boolean inadimplente,
             String mesInadimplente,

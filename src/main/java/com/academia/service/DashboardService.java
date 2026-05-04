@@ -13,8 +13,8 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -22,84 +22,60 @@ public class DashboardService {
 
     private final AlunoRepository alunoRepository;
     private final PagamentoRepository pagamentoRepository;
+    private final AlunoService alunoService;
 
     private static final DateTimeFormatter MES_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM");
 
     @Transactional(readOnly = true)
     public DashboardDTO calcular() {
-        List<Aluno> todos    = alunoRepository.findAllByOrderByNomeAsc();
-        List<Aluno> ativos   = todos.stream()
-                .filter(a -> a.getStatus() == Aluno.StatusAluno.ATIVO).toList();
-        List<Aluno> inativos = todos.stream()
-                .filter(a -> a.getStatus() == Aluno.StatusAluno.INATIVO).toList();
+        List<Aluno> todos   = alunoRepository.findAllByOrderByNomeAsc();
+        List<Aluno> ativos  = todos.stream().filter(a -> a.getStatus() == Aluno.StatusAluno.ATIVO).toList();
+        long totalInativos  = todos.size() - ativos.size();
+
+        if (ativos.isEmpty()) {
+            return new DashboardDTO(0, totalInativos, 0, 0, BigDecimal.ZERO);
+        }
+
+        // ✅ 1 query para todos os pagamentos de todos os ativos
+        List<Long> ids = ativos.stream().map(Aluno::getId).toList();
+        List<Pagamento> todosPagamentos = pagamentoRepository.findAllByAlunoIds(ids);
+
+        Map<Long, List<Pagamento>> pagsPorAluno = todosPagamentos.stream()
+                .collect(Collectors.groupingBy(p -> p.getAluno().getId()));
 
         String mesAtual = YearMonth.now().format(MES_FORMATTER);
         int diaHoje     = LocalDate.now().getDayOfMonth();
 
         long inadimplentes    = 0;
         long venceHojeNaoPago = 0;
-        BigDecimal receitaMes = BigDecimal.ZERO;
         BigDecimal emAberto   = BigDecimal.ZERO;
 
         for (Aluno aluno : ativos) {
-            Optional<Pagamento> pagMes = pagamentoRepository
-                    .findByAlunoIdAndMesReferencia(aluno.getId(), mesAtual);
+            List<Pagamento> pags = pagsPorAluno.getOrDefault(aluno.getId(), Collections.emptyList());
 
-            boolean pagoMesAtual = pagMes
-                    .map(p -> p.getStatus() == Pagamento.StatusPagamento.PAGO)
-                    .orElse(false);
-
-            // Receita do mês: soma o valorPago registrado no mês atual
-            if (pagMes.isPresent()) {
-                receitaMes = receitaMes.add(pagMes.get().getValorPago());
+            AlunoService.InadimplenciaInfo info = alunoService.calcularInadimplenciaEmMemoria(aluno, pags);
+            if (info.inadimplente()) {
+                inadimplentes++;
+                emAberto = emAberto.add(info.totalDevido());
             }
 
             // Vence hoje e não pagou o mês atual
-            if (aluno.getDiaVencimento() == diaHoje && !pagoMesAtual) {
-                venceHojeNaoPago++;
-            }
-
-            // Total em aberto: percorre todo o histórico do aluno
-            BigDecimal devidoAluno = calcularDevidoAluno(aluno);
-            if (devidoAluno.compareTo(BigDecimal.ZERO) > 0) {
-                inadimplentes++;
-                emAberto = emAberto.add(devidoAluno);
+            if (aluno.getDiaVencimento() == diaHoje) {
+                boolean pagoMesAtual = pags.stream()
+                        .filter(p -> p.getMesReferencia().equals(mesAtual))
+                        .findFirst()
+                        .map(p -> p.getStatus() == Pagamento.StatusPagamento.PAGO)
+                        .orElse(false);
+                if (!pagoMesAtual) venceHojeNaoPago++;
             }
         }
 
         return new DashboardDTO(
                 ativos.size(),
-                inativos.size(),
+                totalInativos,
                 inadimplentes,
                 venceHojeNaoPago,
-                receitaMes,
                 emAberto
         );
-    }
-
-    private BigDecimal calcularDevidoAluno(Aluno aluno) {
-        YearMonth mesInicio = YearMonth.from(aluno.getDataInicioPlano());
-        YearMonth mesAtual  = YearMonth.now();
-        BigDecimal total    = BigDecimal.ZERO;
-
-        YearMonth mes = mesInicio;
-        while (!mes.isAfter(mesAtual)) {
-            String mesRef = mes.format(MES_FORMATTER);
-            Optional<Pagamento> pagamento = pagamentoRepository
-                    .findByAlunoIdAndMesReferencia(aluno.getId(), mesRef);
-
-            boolean pago = pagamento
-                    .map(p -> p.getStatus() == Pagamento.StatusPagamento.PAGO)
-                    .orElse(false);
-
-            if (!pago) {
-                BigDecimal restante = pagamento
-                        .map(Pagamento::getValorRestante)
-                        .orElse(aluno.getValorMensalEfetivo());
-                total = total.add(restante);
-            }
-            mes = mes.plusMonths(1);
-        }
-        return total;
     }
 }
