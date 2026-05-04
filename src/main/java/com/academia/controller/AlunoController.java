@@ -24,18 +24,13 @@ public class AlunoController {
      *   - nome: busca parcial por nome
      */
     @GetMapping
-    public ResponseEntity<?> listar(
+    public ResponseEntity<AlunoDTO.PaginatedResponse> listar(
             @RequestParam(required = false) String filtro,
             @RequestParam(required = false) String nome,
             @RequestParam(required = false, defaultValue = "0") int page,
             @RequestParam(required = false, defaultValue = "20") int size
     ) {
-        // Se page > 0 ou size != 20 (padrão), retorna paginado
-        // Mantém compatibilidade: sem parâmetros retorna lista simples
-        if (page > 0 || size != 20) {
-            return ResponseEntity.ok(alunoService.listarPaginado(filtro, nome, page, size));
-        }
-        return ResponseEntity.ok(alunoService.listar(filtro, nome));
+        return ResponseEntity.ok(alunoService.listarPaginado(filtro, nome, page, size));
     }
 
     /**
