@@ -47,7 +47,10 @@ public class PagamentoService {
             String mesRef = mes.format(MES_FORMATTER);
             Pagamento pagamento = pagamentosPorMes.get(mesRef);
 
-            historico.add(buildMesResumo(mes, mesRef, pagamento, aluno.getValorMensalEfetivo()));
+            // Só mostra meses dentro do período do plano
+            if (aluno.deveCobrarMes(mes)) {
+                historico.add(buildMesResumo(mes, mesRef, pagamento, aluno.getValorMensalEfetivo()));
+            }
             mes = mes.minusMonths(1);
         }
 

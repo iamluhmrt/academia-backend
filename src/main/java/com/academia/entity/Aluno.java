@@ -55,6 +55,15 @@ public class Aluno {
     @Column(columnDefinition = "TEXT")
     private String observacoes;
 
+    /**
+     * Data de encerramento do plano (inclusive).
+     * null = plano ativo indefinidamente.
+     * Meses APÓS este mês não geram cobrança.
+     * Dívidas de meses ANTERIORES continuam existindo.
+     */
+    @Column(name = "data_fim_plano")
+    private LocalDate dataFimPlano;
+
     // Plano associado — opcional (null = sem plano cadastrado, usa valorPlano direto)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "plano_id")
@@ -73,6 +82,20 @@ public class Aluno {
      * - Se tem plano associado, usa o valorMensal do plano
      * - Caso contrário, usa o valorPlano manual
      */
+    /**
+     * Retorna true se o mês dado deve ser cobrado para este aluno.
+     * Considera dataInicioPlano e dataFimPlano.
+     */
+    public boolean deveCobrarMes(java.time.YearMonth mes) {
+        java.time.YearMonth inicio = java.time.YearMonth.from(dataInicioPlano);
+        if (mes.isBefore(inicio)) return false;
+        if (dataFimPlano != null) {
+            java.time.YearMonth fim = java.time.YearMonth.from(dataFimPlano);
+            if (mes.isAfter(fim)) return false;
+        }
+        return true;
+    }
+
     public BigDecimal getValorMensalEfetivo() {
         if (plano != null) {
             return plano.getValorMensal();

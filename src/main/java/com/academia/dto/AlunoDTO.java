@@ -35,7 +35,10 @@ public class AlunoDTO {
             String observacoes,
 
             // Opcional — se informado, sobrescreve valorPlano com valorMensal do plano
-            Long planoId
+            Long planoId,
+
+            // Opcional — data de encerramento do plano (inclusive). null = sem fim definido
+            LocalDate dataFimPlano
     ) {}
 
     public record AlunoResponse(
@@ -47,7 +50,8 @@ public class AlunoDTO {
             BigDecimal valorPlano,
             LocalDate dataInicioPlano,
             String observacoes,
-            PlanoResumo plano,          // null se não tiver plano
+            PlanoResumo plano,
+            LocalDate dataFimPlano,
             LocalDateTime createdAt,
             LocalDateTime updatedAt
     ) {}
@@ -62,10 +66,20 @@ public class AlunoDTO {
             LocalDate dataInicioPlano,
             String observacoes,
             PlanoResumo plano,
+            LocalDate dataFimPlano,
             Boolean inadimplente,
             String mesInadimplente,
             Integer totalMesesEmAtraso,
             BigDecimal totalDevido       // soma de valorRestante de todos os meses pendentes/parciais
+    ) {}
+
+    public record PaginatedResponse(
+            java.util.List<AlunoResumoResponse> content,
+            int page,
+            int size,
+            long totalElements,
+            int totalPages,
+            boolean last
     ) {}
 
     public record PlanoResumo(

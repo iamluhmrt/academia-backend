@@ -41,6 +41,7 @@ public class AlunoService {
                 .diaVencimento(request.diaVencimento())
                 .valorPlano(plano != null ? plano.getValorMensal() : request.valorPlano())
                 .dataInicioPlano(request.dataInicioPlano())
+                .dataFimPlano(request.dataFimPlano())
                 .observacoes(request.observacoes())
                 .plano(plano)
                 .build();
@@ -57,6 +58,7 @@ public class AlunoService {
         aluno.setDiaVencimento(request.diaVencimento());
         aluno.setValorPlano(plano != null ? plano.getValorMensal() : request.valorPlano());
         aluno.setDataInicioPlano(request.dataInicioPlano());
+        aluno.setDataFimPlano(request.dataFimPlano());
         aluno.setObservacoes(request.observacoes());
         aluno.setPlano(plano);
         return toResponse(alunoRepository.save(aluno));
@@ -163,6 +165,12 @@ public class AlunoService {
 
         YearMonth mes = mesInicio;
         while (!mes.isAfter(mesAtual)) {
+            // Só cobra meses dentro do período do plano
+            if (!aluno.deveCobrarMes(mes)) {
+                mes = mes.plusMonths(1);
+                continue;
+            }
+
             String mesRef = mes.format(MES_FORMATTER);
             Pagamento pag = pagsPorMes.get(mesRef);
 
@@ -202,6 +210,7 @@ public class AlunoService {
                 aluno.getStatus(), aluno.getDiaVencimento(),
                 aluno.getValorMensalEfetivo(), aluno.getDataInicioPlano(),
                 aluno.getObservacoes(), toPlanoResumo(aluno.getPlano()),
+                aluno.getDataFimPlano(),
                 aluno.getCreatedAt(), aluno.getUpdatedAt()
         );
     }
@@ -212,6 +221,7 @@ public class AlunoService {
                 aluno.getStatus(), aluno.getDiaVencimento(),
                 aluno.getValorMensalEfetivo(), aluno.getDataInicioPlano(),
                 aluno.getObservacoes(), toPlanoResumo(aluno.getPlano()),
+                aluno.getDataFimPlano(),
                 info.inadimplente(), info.mesInadimplente(),
                 info.totalMesesEmAtraso(), info.totalDevido()
         );
@@ -229,6 +239,30 @@ public class AlunoService {
         if (planoId == null) return null;
         return planoRepository.findById(planoId)
                 .orElseThrow(() -> new ResourceNotFoundException("Plano não encontrado com id: " + planoId));
+    }
+
+    @Transactional(readOnly = true)
+    public AlunoDTO.PaginatedResponse listarPaginado(String filtro, String nome, int page, int size) {
+        // Limita page size máximo a 50
+        int pageSize = Math.min(size, 50);
+
+        List<AlunoDTO.AlunoResumoResponse> todos = listar(filtro, nome);
+
+        int totalElements = todos.size();
+        int totalPages = totalElements == 0 ? 1 : (int) Math.ceil((double) totalElements / pageSize);
+        int currentPage = Math.min(page, Math.max(0, totalPages - 1));
+
+        int fromIndex = currentPage * pageSize;
+        int toIndex = Math.min(fromIndex + pageSize, totalElements);
+        List<AlunoDTO.AlunoResumoResponse> pageContent = fromIndex >= totalElements
+                ? Collections.emptyList()
+                : todos.subList(fromIndex, toIndex);
+
+        return new AlunoDTO.PaginatedResponse(
+                pageContent, currentPage, pageSize,
+                totalElements, totalPages,
+                currentPage >= totalPages - 1
+        );
     }
 
     public record InadimplenciaInfo(
