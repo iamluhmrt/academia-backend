@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
@@ -126,20 +127,25 @@ public class AlunoService {
 
     private List<Aluno> buscarAlunosPorFiltroBase(String filtro, String nome) {
         boolean temNome = nome != null && !nome.isBlank();
-        return switch (filtro == null ? "TODOS" : filtro.toUpperCase()) {
-            case "ATIVO"         -> temNome
-                    ? alunoRepository.findByStatusAndNomeContainingIgnoreCaseOrderByNomeAsc(Aluno.StatusAluno.ATIVO, nome)
-                    : alunoRepository.findByStatusOrderByNomeAsc(Aluno.StatusAluno.ATIVO);
-            case "INATIVO"       -> temNome
-                    ? alunoRepository.findByStatusAndNomeContainingIgnoreCaseOrderByNomeAsc(Aluno.StatusAluno.INATIVO, nome)
-                    : alunoRepository.findByStatusOrderByNomeAsc(Aluno.StatusAluno.INATIVO);
-            case "INADIMPLENTES",
-                 "VENCE_HOJE",
-                 "VENCE_MES"     -> alunoRepository.findAllAtivos();
-            default              -> temNome
-                    ? alunoRepository.findByNomeContainingIgnoreCaseOrderByNomeAsc(nome)
-                    : alunoRepository.findAllByOrderByNomeAsc();
+        String filtroUpper = filtro == null ? "TODOS" : filtro.toUpperCase();
+
+        // Busca base sem filtro de nome (fazemos em memória para suportar acentos)
+        List<Aluno> base = switch (filtroUpper) {
+            case "ATIVO"                          -> alunoRepository.findByStatusOrderByNomeAsc(Aluno.StatusAluno.ATIVO);
+            case "INATIVO"                        -> alunoRepository.findByStatusOrderByNomeAsc(Aluno.StatusAluno.INATIVO);
+            case "INADIMPLENTES", "VENCE_HOJE", "VENCE_MES" -> alunoRepository.findAllAtivos();
+            default                               -> alunoRepository.findAllByOrderByNomeAsc();
         };
+
+        // Filtro de nome em memória — normaliza acentos de ambos os lados
+        if (temNome) {
+            String nomeBusca = normalizarParaBusca(nome);
+            base = base.stream()
+                    .filter(a -> normalizarParaBusca(a.getNome()).contains(nomeBusca))
+                    .collect(Collectors.toList());
+        }
+
+        return base;
     }
 
     // ─── CÁLCULO EM MEMÓRIA (sem queries adicionais) ─────────────────────────────
@@ -270,6 +276,16 @@ public class AlunoService {
                 totalElements, totalPages,
                 page >= totalPages - 1
         );
+    }
+
+    /**
+     * Normaliza string para busca: remove acentos e converte para minúsculas.
+     * "João" -> "joao", "Ação" -> "acao"
+     */
+    private String normalizarParaBusca(String texto) {
+        if (texto == null) return "";
+        String normalizado = Normalizer.normalize(texto, Normalizer.Form.NFD);
+        return normalizado.replaceAll("[\\p{InCombiningDiacriticalMarks}]", "").toLowerCase();
     }
 
     public record InadimplenciaInfo(
