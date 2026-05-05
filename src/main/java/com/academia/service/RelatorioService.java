@@ -94,15 +94,18 @@ public class RelatorioService {
         // Ordena inadimplentes por maior dívida
         inadimplentes.sort(Comparator.comparing(RelatorioDTO.AlunoInadimplenteResumo::totalDevido).reversed());
 
+        // Mapa alunoId -> nome do plano para lookup rápido
+        Map<Long, String> planoDoAluno = ativos.stream()
+                .collect(Collectors.toMap(
+                        Aluno::getId,
+                        a -> a.getPlano() != null ? a.getPlano().getNome() : "Sem plano"
+                ));
+
         // Receita por plano (baseado em caixa do período)
         Map<String, List<Pagamento>> pagsPorPlano = pagsCaixa.stream()
-                .collect(Collectors.groupingBy(p -> {
-                    Aluno aluno = ativos.stream()
-                            .filter(a -> a.getId().equals(p.getAluno().getId()))
-                            .findFirst().orElse(null);
-                    if (aluno == null) return "Sem plano";
-                    return aluno.getPlano() != null ? aluno.getPlano().getNome() : "Sem plano";
-                }));
+                .collect(Collectors.groupingBy(p ->
+                        planoDoAluno.getOrDefault(p.getAluno().getId(), "Sem plano")
+                ));
 
         List<RelatorioDTO.ReceitaPorPlano> receitaPorPlano = pagsPorPlano.entrySet().stream()
                 .map(e -> new RelatorioDTO.ReceitaPorPlano(
@@ -117,9 +120,10 @@ public class RelatorioService {
         BigDecimal ticketMedio = ativos.isEmpty() ? BigDecimal.ZERO
                 : receitaCaixa.divide(BigDecimal.valueOf(ativos.size()), 2, RoundingMode.HALF_UP);
 
-        // Taxa de inadimplência
-        double taxaInadimplencia = ativos.isEmpty() ? 0.0
+        // Taxa de inadimplência — arredondada em 1 casa decimal
+        double taxaInadimplenciaRaw = ativos.isEmpty() ? 0.0
                 : (inadimplentes.size() * 100.0) / ativos.size();
+        double taxaInadimplencia = Math.round(taxaInadimplenciaRaw * 10.0) / 10.0;
 
         // Label do período
         String nomeMes = ym.getMonth().getDisplayName(TextStyle.FULL, PT_BR);

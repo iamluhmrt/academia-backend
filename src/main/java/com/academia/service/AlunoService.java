@@ -250,18 +250,25 @@ public class AlunoService {
 
         int totalElements = todos.size();
         int totalPages = totalElements == 0 ? 1 : (int) Math.ceil((double) totalElements / pageSize);
-        int currentPage = Math.min(page, Math.max(0, totalPages - 1));
 
-        int fromIndex = currentPage * pageSize;
+        int fromIndex = page * pageSize;
+        // Página além do limite — retorna vazio
+        if (fromIndex >= totalElements && totalElements > 0) {
+            return new AlunoDTO.PaginatedResponse(
+                    Collections.emptyList(), page, pageSize,
+                    totalElements, totalPages, true
+            );
+        }
+
         int toIndex = Math.min(fromIndex + pageSize, totalElements);
         List<AlunoDTO.AlunoResumoResponse> pageContent = fromIndex >= totalElements
                 ? Collections.emptyList()
                 : todos.subList(fromIndex, toIndex);
 
         return new AlunoDTO.PaginatedResponse(
-                pageContent, currentPage, pageSize,
+                pageContent, page, pageSize,
                 totalElements, totalPages,
-                currentPage >= totalPages - 1
+                page >= totalPages - 1
         );
     }
 

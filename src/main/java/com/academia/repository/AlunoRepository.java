@@ -13,11 +13,11 @@ public interface AlunoRepository extends JpaRepository<Aluno, Long> {
 
     List<Aluno> findByStatusOrderByNomeAsc(Aluno.StatusAluno status);
 
-    List<Aluno> findByNomeContainingIgnoreCaseOrderByNomeAsc(String nome);
+    @Query("SELECT a FROM Aluno a WHERE LOWER(a.nome) LIKE LOWER(CONCAT('%', :nome, '%')) ORDER BY a.nome")
+    List<Aluno> findByNomeContainingIgnoreCaseOrderByNomeAsc(@Param("nome") String nome);
 
-    List<Aluno> findByStatusAndNomeContainingIgnoreCaseOrderByNomeAsc(
-            Aluno.StatusAluno status, String nome
-    );
+    @Query("SELECT a FROM Aluno a WHERE a.status = :status AND LOWER(a.nome) LIKE LOWER(CONCAT('%', :nome, '%')) ORDER BY a.nome")
+    List<Aluno> findByStatusAndNomeContainingIgnoreCaseOrderByNomeAsc(@Param("status") Aluno.StatusAluno status, @Param("nome") String nome);
 
     @Query("SELECT a FROM Aluno a WHERE a.status = 'ATIVO' AND a.diaVencimento = :dia ORDER BY a.nome")
     List<Aluno> findAtivosComVencimentoNoDia(@Param("dia") Integer dia);
