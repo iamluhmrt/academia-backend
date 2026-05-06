@@ -155,16 +155,16 @@ public class AlunoService {
      * Substitui o loop com N queries por processamento em memória.
      */
     public InadimplenciaInfo calcularInadimplenciaEmMemoria(Aluno aluno, List<Pagamento> pagamentos) {
-        if (aluno.getStatus() != Aluno.StatusAluno.ATIVO) {
-            return new InadimplenciaInfo(false, null, 0, BigDecimal.ZERO);
-        }
-
         // Indexa por mesReferencia para O(1)
         Map<String, Pagamento> pagsPorMes = pagamentos.stream()
                 .collect(Collectors.toMap(Pagamento::getMesReferencia, p -> p));
 
         YearMonth mesInicio = YearMonth.from(aluno.getDataInicioPlano());
         YearMonth mesAtual  = YearMonth.now();
+
+        // Aluno inativo sem dataFimPlano: congela cobranças no mês atual
+        // mas mantém todas as dívidas passadas — não zera nada
+        // Aluno inativo COM dataFimPlano: respeita o dataFimPlano normalmente
 
         List<String> mesesEmAtraso = new ArrayList<>();
         BigDecimal totalDevido = BigDecimal.ZERO;

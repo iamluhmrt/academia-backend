@@ -84,15 +84,25 @@ public class Aluno {
      */
     /**
      * Retorna true se o mês dado deve ser cobrado para este aluno.
-     * Considera dataInicioPlano e dataFimPlano.
+     * Regras:
+     * - Antes do dataInicioPlano → não cobra
+     * - Após dataFimPlano (se definido) → não cobra
+     * - Aluno INATIVO sem dataFimPlano → não cobra meses futuros,
+     *   mas mantém cobranças de meses passados (dívidas congeladas)
      */
     public boolean deveCobrarMes(java.time.YearMonth mes) {
         java.time.YearMonth inicio = java.time.YearMonth.from(dataInicioPlano);
         if (mes.isBefore(inicio)) return false;
+
         if (dataFimPlano != null) {
             java.time.YearMonth fim = java.time.YearMonth.from(dataFimPlano);
             if (mes.isAfter(fim)) return false;
+        } else if (status == StatusAluno.INATIVO) {
+            // Sem fim de plano explícito: inativo congela no mês atual
+            // Meses futuros não são cobrados, mas passados sim
+            if (mes.isAfter(java.time.YearMonth.now())) return false;
         }
+
         return true;
     }
 
