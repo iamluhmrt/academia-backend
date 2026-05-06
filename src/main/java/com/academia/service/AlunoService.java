@@ -133,7 +133,8 @@ public class AlunoService {
         List<Aluno> base = switch (filtroUpper) {
             case "ATIVO"                          -> alunoRepository.findByStatusOrderByNomeAsc(Aluno.StatusAluno.ATIVO);
             case "INATIVO"                        -> alunoRepository.findByStatusOrderByNomeAsc(Aluno.StatusAluno.INATIVO);
-            case "INADIMPLENTES", "VENCE_HOJE", "VENCE_MES" -> alunoRepository.findAllAtivos();
+            case "INADIMPLENTES"                          -> alunoRepository.findAllByOrderByNomeAsc(); // inclui inativos com dívida
+            case "VENCE_HOJE", "VENCE_MES"                  -> alunoRepository.findAllAtivos();
             default                               -> alunoRepository.findAllByOrderByNomeAsc();
         };
 

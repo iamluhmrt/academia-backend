@@ -32,12 +32,12 @@ public class DashboardService {
         List<Aluno> ativos  = todos.stream().filter(a -> a.getStatus() == Aluno.StatusAluno.ATIVO).toList();
         long totalInativos  = todos.size() - ativos.size();
 
-        if (ativos.isEmpty()) {
+        if (todos.isEmpty()) {
             return new DashboardDTO(0, totalInativos, 0, 0, BigDecimal.ZERO);
         }
 
-        // ✅ 1 query para todos os pagamentos de todos os ativos
-        List<Long> ids = ativos.stream().map(Aluno::getId).toList();
+        // Busca pagamentos de TODOS (ativos + inativos) para calcular inadimplência corretamente
+        List<Long> ids = todos.stream().map(Aluno::getId).toList();
         List<Pagamento> todosPagamentos = pagamentoRepository.findAllByAlunoIds(ids);
 
         Map<Long, List<Pagamento>> pagsPorAluno = todosPagamentos.stream()
@@ -50,7 +50,7 @@ public class DashboardService {
         long venceHojeNaoPago = 0;
         BigDecimal emAberto   = BigDecimal.ZERO;
 
-        for (Aluno aluno : ativos) {
+        for (Aluno aluno : todos) {
             List<Pagamento> pags = pagsPorAluno.getOrDefault(aluno.getId(), Collections.emptyList());
 
             AlunoService.InadimplenciaInfo info = alunoService.calcularInadimplenciaEmMemoria(aluno, pags);
@@ -59,8 +59,8 @@ public class DashboardService {
                 emAberto = emAberto.add(info.totalDevido());
             }
 
-            // Vence hoje e não pagou o mês atual
-            if (aluno.getDiaVencimento() == diaHoje) {
+            // Vence hoje: apenas ativos
+            if (aluno.getStatus() == Aluno.StatusAluno.ATIVO && aluno.getDiaVencimento() == diaHoje) {
                 boolean pagoMesAtual = pags.stream()
                         .filter(p -> p.getMesReferencia().equals(mesAtual))
                         .findFirst()
