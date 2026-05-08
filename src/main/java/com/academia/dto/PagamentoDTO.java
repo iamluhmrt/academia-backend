@@ -18,6 +18,16 @@ public class PagamentoDTO {
             LocalDate dataPagamento
     ) {}
 
+    // Novo: pagamento integral na entrada (bulk)
+    public record PagamentoIntegralRequest(
+            @NotNull(message = "Valor total é obrigatório")
+            @DecimalMin(value = "0.01", message = "Valor total deve ser maior que zero")
+            BigDecimal valorTotal,
+
+            @NotNull(message = "Data de pagamento é obrigatória")
+            LocalDate dataPagamento
+    ) {}
+
     public record PagamentoResponse(
             Long id,
             Long alunoId,

@@ -133,8 +133,17 @@ public class AlunoService {
         List<Aluno> base = switch (filtroUpper) {
             case "ATIVO"                          -> alunoRepository.findByStatusOrderByNomeAsc(Aluno.StatusAluno.ATIVO);
             case "INATIVO"                        -> alunoRepository.findByStatusOrderByNomeAsc(Aluno.StatusAluno.INATIVO);
-            case "INADIMPLENTES"                          -> alunoRepository.findAllByOrderByNomeAsc(); // inclui inativos com dívida
-            case "VENCE_HOJE", "VENCE_MES"                  -> alunoRepository.findAllAtivos();
+            case "INADIMPLENTES"  -> alunoRepository.findAllByOrderByNomeAsc();
+            case "RENOVAR_PLANO"  -> {
+                java.time.LocalDate hoje   = java.time.LocalDate.now();
+                java.time.LocalDate limite = hoje.plusDays(30);
+                List<Aluno> vencendo = alunoRepository.findComPlanoVencendo(hoje, limite);
+                List<Aluno> vencidos = alunoRepository.findComPlanoVencido(hoje);
+                List<Aluno> combined = new ArrayList<>(vencidos);
+                vencendo.stream().filter(a -> !combined.contains(a)).forEach(combined::add);
+                yield combined;
+            }
+            case "VENCE_HOJE", "VENCE_MES" -> alunoRepository.findAllAtivos();
             default                               -> alunoRepository.findAllByOrderByNomeAsc();
         };
 

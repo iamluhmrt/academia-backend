@@ -29,4 +29,16 @@ public interface AlunoRepository extends JpaRepository<Aluno, Long> {
 
     @Query("SELECT MIN(a.dataInicioPlano) FROM Aluno a")
     java.util.Optional<java.time.LocalDate> findMenorDataInicio();
+
+    // Alunos com dataFimPlano nos próximos 30 dias ou já vencido (para filtro "Renovar")
+    @Query("SELECT a FROM Aluno a WHERE a.dataFimPlano IS NOT NULL AND a.dataFimPlano <= :limite ORDER BY a.dataFimPlano ASC")
+    List<Aluno> findComPlanoVencendoAte(@Param("limite") java.time.LocalDate limite);
+
+    // Alunos com dataFimPlano entre hoje e 30 dias à frente (vencendo em breve)
+    @Query("SELECT a FROM Aluno a WHERE a.dataFimPlano IS NOT NULL AND a.dataFimPlano >= :hoje AND a.dataFimPlano <= :limite ORDER BY a.dataFimPlano ASC")
+    List<Aluno> findComPlanoVencendo(@Param("hoje") java.time.LocalDate hoje, @Param("limite") java.time.LocalDate limite);
+
+    // Alunos com dataFimPlano já vencido (plano encerrado, sem renovação)
+    @Query("SELECT a FROM Aluno a WHERE a.dataFimPlano IS NOT NULL AND a.dataFimPlano < :hoje ORDER BY a.dataFimPlano ASC")
+    List<Aluno> findComPlanoVencido(@Param("hoje") java.time.LocalDate hoje);
 }

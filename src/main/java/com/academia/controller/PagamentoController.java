@@ -50,4 +50,18 @@ public class PagamentoController {
     ) {
         return ResponseEntity.ok(pagamentoService.estornar(alunoId, mesReferencia));
     }
+
+    /**
+     * POST /api/alunos/{alunoId}/pagamentos/integral
+     * Registra pagamento de todos os meses do plano de uma vez.
+     * O aluno deve ter dataFimPlano configurado.
+     * Body: { "valorTotal": 960.00, "dataPagamento": "2026-05-06" }
+     */
+    @PostMapping("/integral")
+    public ResponseEntity<List<PagamentoDTO.PagamentoResponse>> integral(
+            @PathVariable Long alunoId,
+            @Valid @RequestBody PagamentoDTO.PagamentoIntegralRequest request
+    ) {
+        return ResponseEntity.ok(pagamentoService.registrarPagamentoIntegral(alunoId, request));
+    }
 }
