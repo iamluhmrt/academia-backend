@@ -5,6 +5,7 @@ import com.academia.entity.Aluno;
 import com.academia.entity.Pagamento;
 import com.academia.exception.BusinessException;
 import com.academia.exception.ResourceNotFoundException;
+import com.academia.repository.AlunoRepository;
 import com.academia.repository.PagamentoRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ import java.util.stream.Collectors;
 public class PagamentoService {
 
     private final PagamentoRepository pagamentoRepository;
+    private final AlunoRepository alunoRepository;
     private final AlunoService alunoService;
 
     private static final DateTimeFormatter MES_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM");
@@ -144,30 +146,44 @@ public class PagamentoService {
     ) {
         Aluno aluno = alunoService.buscarPorId(alunoId);
 
-        // Precisa ter dataFimPlano definido para saber o período
-        if (aluno.getDataFimPlano() == null) {
-            throw new BusinessException("O aluno não possui data de encerramento de plano definida. " +
-                    "Configure o período do plano antes de registrar pagamento integral.");
+        if (aluno.getPlano() == null) {
+            throw new BusinessException("O aluno precisa ter um plano selecionado para usar pagamento integral.");
+        }
+
+        int duracao = aluno.getPlano().getDuracaoMeses();
+        if (duracao <= 1) {
+            throw new BusinessException("Pagamento integral só está disponível para planos com duração maior que 1 mês.");
         }
 
         YearMonth mesInicio = YearMonth.from(aluno.getDataInicioPlano());
-        YearMonth mesFim    = YearMonth.from(aluno.getDataFimPlano());
 
-        // Calcula o número de meses do plano
-        long totalMeses = mesInicio.until(mesFim, java.time.temporal.ChronoUnit.MONTHS) + 1;
-        if (totalMeses <= 0) {
-            throw new BusinessException("Período do plano inválido.");
+        // Calcula dataFimPlano automaticamente pelo plano se não definido
+        YearMonth mesFim;
+        if (aluno.getDataFimPlano() != null) {
+            mesFim = YearMonth.from(aluno.getDataFimPlano());
+        } else {
+            mesFim = mesInicio.plusMonths(duracao - 1);
+            // Persiste o dataFimPlano no aluno para consistência futura
+            aluno.setDataFimPlano(mesFim.atEndOfMonth());
+            alunoRepository.save(aluno);
         }
 
-        // Distribui o valor total entre os meses (divisão proporcional)
+        // Distribui o valor total entre os meses
+        long totalMeses = mesInicio.until(mesFim, java.time.temporal.ChronoUnit.MONTHS) + 1;
         java.math.BigDecimal valorPorMes = request.valorTotal()
                 .divide(java.math.BigDecimal.valueOf(totalMeses), 2, java.math.RoundingMode.HALF_UP);
 
+        // Ajuste do último mês para não perder centavos
+        java.math.BigDecimal somaAntesDoUltimo = valorPorMes.multiply(java.math.BigDecimal.valueOf(totalMeses - 1));
+        java.math.BigDecimal valorUltimoMes = request.valorTotal().subtract(somaAntesDoUltimo);
+
         List<PagamentoDTO.PagamentoResponse> resultado = new ArrayList<>();
         YearMonth mes = mesInicio;
+        long idx = 0;
 
         while (!mes.isAfter(mesFim)) {
             String mesRef = mes.format(MES_FORMATTER);
+            java.math.BigDecimal valorEsseMes = (idx == totalMeses - 1) ? valorUltimoMes : valorPorMes;
 
             Optional<Pagamento> existente = pagamentoRepository
                     .findByAlunoIdAndMesReferencia(alunoId, mesRef);
@@ -175,9 +191,9 @@ public class PagamentoService {
             Pagamento pagamento;
             if (existente.isPresent()) {
                 pagamento = existente.get();
-                // Só atualiza se não estiver pago
                 if (pagamento.getStatus() == Pagamento.StatusPagamento.PAGO) {
                     mes = mes.plusMonths(1);
+                    idx++;
                     continue;
                 }
             } else {
@@ -189,25 +205,17 @@ public class PagamentoService {
                         .build();
             }
 
-            pagamento.setValorPago(valorPorMes);
+            pagamento.setValorPago(valorEsseMes);
             pagamento.setDataUltimoPagamento(request.dataPagamento());
             resultado.add(toResponse(pagamentoRepository.save(pagamento)));
             mes = mes.plusMonths(1);
+            idx++;
         }
 
         return resultado;
     }
 
-    // ─── PAGAMENTO INTEGRAL (bulk) ───────────────────────────────────────────────
-
-    /**
-     * Registra pagamento integral de um plano com duração definida.
-     * Divide o valorTotal negociado por duracaoMeses e cria 1 registro por mês.
-     * Todos ficam com status PAGO.
-     */
-    @Transactional
-
-// ─── HELPERS ────────────────────────────────────────────────────────────────
+    // ─── HELPERS ────────────────────────────────────────────────────────────────
 
     private PagamentoDTO.MesResumo buildMesResumo(
             YearMonth mes, String mesRef, Pagamento pagamento, BigDecimal valorPlano
