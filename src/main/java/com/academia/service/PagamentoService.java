@@ -37,7 +37,13 @@ public class PagamentoService {
         Aluno aluno = alunoService.buscarPorId(alunoId);
 
         YearMonth mesInicio = YearMonth.from(aluno.getDataInicioPlano());
-        YearMonth mesAtual = YearMonth.now();
+        YearMonth mesAtual  = YearMonth.now();
+
+        // Se tem dataFimPlano (ex: plano anual pago integral), mostra até ele
+        // Senão, mostra até o mês atual
+        YearMonth mesFinal = aluno.getDataFimPlano() != null
+                ? YearMonth.from(aluno.getDataFimPlano())
+                : mesAtual;
 
         List<Pagamento> pagamentos = pagamentoRepository.findByAlunoIdOrderByMesReferenciaDesc(alunoId);
         Map<String, Pagamento> pagamentosPorMes = pagamentos.stream()
@@ -45,15 +51,13 @@ public class PagamentoService {
 
         List<PagamentoDTO.MesResumo> historico = new ArrayList<>();
 
-        YearMonth mes = mesAtual;
+        // Percorre do mesFinal até mesInicio (mais recente primeiro)
+        YearMonth mes = mesFinal;
         while (!mes.isBefore(mesInicio)) {
             String mesRef = mes.format(MES_FORMATTER);
             Pagamento pagamento = pagamentosPorMes.get(mesRef);
 
-            // Só mostra meses dentro do período do plano
-            if (aluno.deveCobrarMes(mes)) {
-                historico.add(buildMesResumo(mes, mesRef, pagamento, aluno.getValorMensalEfetivo()));
-            }
+            historico.add(buildMesResumo(mes, mesRef, pagamento, aluno.getValorMensalEfetivo()));
             mes = mes.minusMonths(1);
         }
 
@@ -163,15 +167,19 @@ public class PagamentoService {
             mesFim = YearMonth.from(aluno.getDataFimPlano());
         } else {
             mesFim = mesInicio.plusMonths(duracao - 1);
-            // Persiste o dataFimPlano no aluno para consistência futura
+            // Persiste o dataFimPlano no aluno
             aluno.setDataFimPlano(mesFim.atEndOfMonth());
-            alunoRepository.save(aluno);
         }
 
         // Distribui o valor total entre os meses
         long totalMeses = mesInicio.until(mesFim, java.time.temporal.ChronoUnit.MONTHS) + 1;
         java.math.BigDecimal valorPorMes = request.valorTotal()
                 .divide(java.math.BigDecimal.valueOf(totalMeses), 2, java.math.RoundingMode.HALF_UP);
+
+        // Atualiza valorPlano do aluno com o valor negociado por mês
+        // Isso garante que a listagem mostre o valor correto
+        aluno.setValorPlano(valorPorMes);
+        alunoRepository.save(aluno);
 
         // Ajuste do último mês para não perder centavos
         java.math.BigDecimal somaAntesDoUltimo = valorPorMes.multiply(java.math.BigDecimal.valueOf(totalMeses - 1));
@@ -214,6 +222,10 @@ public class PagamentoService {
             mes = mes.plusMonths(1);
             idx++;
         }
+
+        // Atualiza valorPlano do aluno para refletir o valor mensal negociado
+        aluno.setValorPlano(valorPorMes);
+        alunoRepository.save(aluno);
 
         return resultado;
     }
