@@ -200,11 +200,14 @@ public class PagamentoService {
                 pagamento = Pagamento.builder()
                         .aluno(aluno)
                         .mesReferencia(mesRef)
-                        .valorTotal(aluno.getValorMensalEfetivo())
+                        .valorTotal(java.math.BigDecimal.ZERO) // será sobrescrito abaixo
                         .valorPago(java.math.BigDecimal.ZERO)
                         .build();
             }
 
+            // valorTotal do mês = valor negociado dividido pelos meses
+            // valorPago = mesmo valor → status PAGO
+            pagamento.setValorTotal(valorEsseMes);
             pagamento.setValorPago(valorEsseMes);
             pagamento.setDataUltimoPagamento(request.dataPagamento());
             resultado.add(toResponse(pagamentoRepository.save(pagamento)));
