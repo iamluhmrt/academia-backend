@@ -39,24 +39,36 @@ public class PagamentoService {
         YearMonth mesInicio = YearMonth.from(aluno.getDataInicioPlano());
         YearMonth mesAtual  = YearMonth.now();
 
-        // Se tem dataFimPlano (ex: plano anual pago integral), mostra até ele
-        // Senão, mostra até o mês atual
-        YearMonth mesFinal = aluno.getDataFimPlano() != null
-                ? YearMonth.from(aluno.getDataFimPlano())
-                : mesAtual;
-
+        // Busca todos os pagamentos registrados
         List<Pagamento> pagamentos = pagamentoRepository.findByAlunoIdOrderByMesReferenciaDesc(alunoId);
-        Map<String, Pagamento> pagamentosPorMes = pagamentos.stream()
+        Map<String, Pagamento> pagsPorMes = pagamentos.stream()
                 .collect(Collectors.toMap(Pagamento::getMesReferencia, p -> p));
+
+        // Determina até onde mostrar:
+        // - Se tem dataFimPlano: mostra até o maior entre dataFimPlano e o mês mais recente com pagamento
+        // - Senão: mostra até o mês atual
+        YearMonth mesFinal = mesAtual;
+        if (aluno.getDataFimPlano() != null) {
+            YearMonth fimPlano = YearMonth.from(aluno.getDataFimPlano());
+            // Se o plano foi pago integralmente no futuro, mostra até o fim do plano
+            if (fimPlano.isAfter(mesAtual)) {
+                mesFinal = fimPlano;
+            }
+        }
+        // Também verifica se há pagamentos futuros registrados (ex: integral)
+        for (String mesRef : pagsPorMes.keySet()) {
+            YearMonth mesPag = YearMonth.parse(mesRef, MES_FORMATTER);
+            if (mesPag.isAfter(mesFinal)) {
+                mesFinal = mesPag;
+            }
+        }
 
         List<PagamentoDTO.MesResumo> historico = new ArrayList<>();
 
-        // Percorre do mesFinal até mesInicio (mais recente primeiro)
         YearMonth mes = mesFinal;
         while (!mes.isBefore(mesInicio)) {
             String mesRef = mes.format(MES_FORMATTER);
-            Pagamento pagamento = pagamentosPorMes.get(mesRef);
-
+            Pagamento pagamento = pagsPorMes.get(mesRef);
             historico.add(buildMesResumo(mes, mesRef, pagamento, aluno.getValorMensalEfetivo()));
             mes = mes.minusMonths(1);
         }
